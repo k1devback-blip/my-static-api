@@ -1,0 +1,7 @@
+{
+  "name": "data-stream-pipeline",
+  "version": "1.0.1",
+  "description": "A high-performance data processing pipeline for edge environments",
+  "private": true,
+  "license": "MIT"
+}
