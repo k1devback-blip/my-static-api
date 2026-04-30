@@ -1,88 +1,94 @@
-import { Readable, Transform } from "node:stream";
-
 export const config = {
-  runtime: "edge", // استفاده از محیط Edge برای سرعت بالا و کاهش شناسایی
+  runtime: "edge",
 };
 
 const TARGET_BASE = (process.env.DATA_PIPELINE_TARGET || "").replace(/\/$/, "");
 
-// ۱. فیلتر بی‌رحمانه هدرها (Hop-by-Hop و پلتفرم)
+// ۱. لیست سیاه هدرها - پاکسازی ردپای سیستم‌های پروکسی
 const STRIP_HEADERS = new Set([
   "host", "connection", "proxy-connection", "keep-alive", "via",
   "proxy-authenticate", "proxy-authorization", "te", "trailer",
   "transfer-encoding", "upgrade", "forwarded", "x-forwarded-host",
   "x-forwarded-proto", "x-forwarded-port", "x-forwarded-for", "x-real-ip",
-  "cf-ray", "cf-connecting-ip"
+  "cf-ray", "cf-connecting-ip", "x-vercel-id", "x-vercel-forwarded-for"
 ]);
 
-// ۲. هدرهای مجاز (فقط موارد کاملاً استاندارد وب)
-const ALLOWED_FORWARD_HEADERS = new Set([
+// ۲. لیست سفید هدرها - فقط موارد ضروری برای وب
+const ALLOWED_HEADERS = new Set([
   "accept", "accept-encoding", "accept-language", "cache-control",
-  "content-type", "user-agent", "range", "referer"
+  "content-type", "user-agent", "range", "referer", "authorization", "origin"
 ]);
 
 export default async function handler(req) {
-  if (!TARGET_BASE) return new Response("System Offline", { status: 503 });
+  // اگر آدرس مقصد ست نشده باشد
+  if (!TARGET_BASE) return new Response("Powering Edge Network...", { status: 200 });
 
   const url = new URL(req.url);
 
-  // ۳. استراتژی فریب: پاسخ به صفحه اصلی برای عادی جلوه دادن پروژه
+  // ۳. تکنیک "استتار" (Camouflage)
+  // اگر کسی (یا بات ورسل) آدرس رو مستقیماً باز کنه، یه سایت فیک میبینه
   if (url.pathname === "/" || url.pathname === "/favicon.ico") {
-    return new Response("<html><body><h1>API Service Active</h1></body></html>", {
-      headers: { "content-type": "text/html" },
-    });
+    return new Response(
+      "<html><head><title>Cloud Data Processor</title></head><body><h1>System Status: Operational</h1><p>Edge pipeline is running smoothly.</p></body></html>", 
+      { headers: { "content-type": "text/html" } }
+    );
   }
 
   try {
     const targetUrl = TARGET_BASE + url.pathname + url.search;
-    const headers = new Headers();
+    const newHeaders = new Headers();
 
-    // ۵. تمیزکاری هدرهای ورودی
+    // ۴. فیلتر کردن هوشمند هدرها برای کاهش شناسایی
     for (const [key, value] of req.headers) {
       const lowKey = key.toLowerCase();
-      if (ALLOWED_FORWARD_HEADERS.has(lowKey) || lowKey.startsWith("sec-")) {
-        headers.set(key, value);
+      // فقط هدرهای استاندارد و هدرهای xhttp رو عبور میدیم
+      if (ALLOWED_HEADERS.has(lowKey) || lowKey.startsWith("sec-") || lowKey.startsWith("x-xhttp-")) {
+        newHeaders.set(key, value);
       }
     }
 
-    // ۶. تغییر هویت اجباری (Masking)
-    headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+    // ۵. جعل User-Agent ثابت و مدرن
+    newHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
 
-    const method = req.method;
     const fetchOpts = {
-      method,
-      headers,
+      method: req.method,
+      headers: newHeaders,
       redirect: "manual",
+      // بهینه‌سازی برای استفاده کمتر از CPU
       keepalive: true,
     };
 
-    if (method !== "GET" && method !== "HEAD") {
+    if (req.method !== "GET" && req.method !== "HEAD") {
       fetchOpts.body = req.body;
       fetchOpts.duplex = "half";
     }
 
+    // ۶. شروع عملیات انتقال داده
     const upstream = await fetch(targetUrl, fetchOpts);
 
-    // ۷. تمیزکاری هدرهای خروجی (پاکسازی ردپای سرور اصلی)
-    const respHeaders = new Headers();
-    for (const [k, v] of upstream.headers) {
-      const lowK = k.toLowerCase();
-      if (STRIP_HEADERS.has(lowK) || lowK.startsWith("x-vercel-") || lowK === "server") {
-        continue;
+    const responseHeaders = new Headers();
+    for (const [key, value] of upstream.headers) {
+      const lowKey = key.toLowerCase();
+      // حذف هدرهایی که ورسل رو حساس میکنه یا نشون میده سرور اصلی چیه
+      if (!STRIP_HEADERS.has(lowKey) && !lowKey.startsWith("x-vercel-") && lowKey !== "server") {
+        responseHeaders.set(key, value);
       }
-      respHeaders.set(k, v);
     }
 
-    // ۸. هدرهای فریب برای سیستم مانیتورینگ ورسل
-    respHeaders.set("Cache-Control", "private, no-store, no-cache, must-revalidate");
-    respHeaders.set("X-Accel-Buffering", "no"); // جلوگیری از بافرینگ سنگین
+    // ۷. هدرهای طلایی برای کاهش مصرف و بن نشدن
+    // این هدر به ورسل میگه دیتا رو بافر نکن، مستقیم رد کن (مصرف CPU کمتر)
+    responseHeaders.set("X-Accel-Buffering", "no");
+    // فریب سیستم کشینگ
+    responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    responseHeaders.set("Pragma", "no-cache");
 
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: respHeaders,
+      headers: responseHeaders,
     });
 
   } catch (err) {
-    return new Response("Gateway Error", { status: 502 });
+    // پیام خطای کاملاً عادی و غیرمشکوک
+    return new Response("Service Temporarily Unavailable", { status: 503 });
   }
 }
