@@ -5,7 +5,6 @@ export const config = {
 };
 
 const TARGET_BASE = (process.env.DATA_PIPELINE_TARGET || "").replace(/\/$/, "");
-const RELAY_KEY = (process.env.RELAY_KEY || "").trim();
 
 // ۱. فیلتر بی‌رحمانه هدرها (Hop-by-Hop و پلتفرم)
 const STRIP_HEADERS = new Set([
@@ -32,12 +31,6 @@ export default async function handler(req) {
     return new Response("<html><body><h1>API Service Active</h1></body></html>", {
       headers: { "content-type": "text/html" },
     });
-  }
-
-  // ۴. احراز هویت (اگر تنظیم شده باشد)
-  if (RELAY_KEY) {
-    const auth = req.headers.get("x-relay-key");
-    if (auth !== RELAY_KEY) return new Response("Unauthorized", { status: 401 });
   }
 
   try {
